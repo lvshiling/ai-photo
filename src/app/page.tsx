@@ -20,6 +20,7 @@ export default function Home() {
   const [edgeTrim, setEdgeTrim] = useState<number>(0);
   const [crop, setCrop] = useState<Crop>();
   const [logs, setLogs] = useState<string[]>([]);
+  const [showLogs, setShowLogs] = useState<boolean>(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const resultContainerRef = useRef<HTMLDivElement>(null);
@@ -39,7 +40,20 @@ export default function Home() {
     if (logsEndRef.current) {
       logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [logs]);
+  }, [logs, showLogs]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl + H or Cmd + H to toggle logs
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
+        e.preventDefault();
+        setShowLogs(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     async function initSegmenter() {
@@ -567,10 +581,10 @@ export default function Home() {
         </div>
       </div>
 
-      {process.env.NODE_ENV === 'development' && (
+      {(process.env.NODE_ENV === 'development' || showLogs) && (
         <div className="w-full max-w-4xl mt-8 bg-gray-900 border border-gray-700 rounded-lg shadow-inner flex flex-col h-48">
           <div className="bg-gray-800 text-gray-300 text-xs font-semibold px-4 py-2 border-b border-gray-700 rounded-t-lg flex justify-between">
-            <span>System execution logs (Dev Only)</span>
+            <span>System execution logs</span>
             <button onClick={() => setLogs([])} className="hover:text-white">Clear</button>
           </div>
           <div className="p-4 overflow-y-auto flex-1 font-mono text-sm text-green-400 space-y-1">
