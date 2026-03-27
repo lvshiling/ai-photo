@@ -62,8 +62,8 @@ export default function Home() {
         });
         setSegmenter(segmenter);
         addLog('Model loaded successfully. Ready to process.');
-      } catch (err: any) {
-        addLog(`Error loading model: ${err.message}`);
+      } catch (err: unknown) {
+        addLog(`Error loading model: ${(err as Error).message}`);
       }
     }
     initSegmenter();
@@ -219,10 +219,10 @@ export default function Home() {
 
       const w = tempCanvas.width;
       const h = tempCanvas.height;
-      let alphaMask = new Float32Array(maskData.length);
+      const alphaMask = new Float32Array(maskData.length);
       
       // Determine if maskData gives 0 for person or !== 0 for person
-      let isPersonZero = maskData[0] === 0 || maskData[10] === 0; 
+      const isPersonZero = maskData[0] === 0 || maskData[10] === 0; 
       
       if (bgConfidence) {
         // bgConfidence is straightforward map of background
@@ -240,7 +240,7 @@ export default function Home() {
         const trimFactor = edgeTrim / 100; // 0.0 to 1.0
         
         for (let i = 0; i < alphaMask.length; i++) {
-           let bgAlpha = alphaMask[i];
+           const bgAlpha = alphaMask[i];
            // Only target the soft edge pixels (excluding the solid inner body where bgAlpha is ~0)
            // and already purely background pixels.
            if (bgAlpha > 0.02 && bgAlpha < 1.0) {
@@ -272,7 +272,7 @@ export default function Home() {
                  // The brighter the pixel, and the higher the edgeTrim setting, the more it gets cut off.
                  const brightRatio = (lum - 90) / (255 - 90); // 0.0 to 1.0
                  // MASSIVE increase to multiplier to give a highly aggressive cutoff!
-                 let newBgAlpha = bgAlpha + trimFactor * brightRatio * 8.0; 
+                 const newBgAlpha = bgAlpha + trimFactor * brightRatio * 8.0; 
                  alphaMask[i] = Math.min(1.0, newBgAlpha);
               }
            }
@@ -396,9 +396,9 @@ export default function Home() {
       }
       
       addLog('Output render complete.');
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      addLog(`Error processing image: ${e.message}`);
+      addLog(`Error processing image: ${(e as Error).message}`);
       alert(t.error);
     }
   };
@@ -567,18 +567,30 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="w-full max-w-4xl mt-8 bg-gray-900 border border-gray-700 rounded-lg shadow-inner flex flex-col h-48">
-        <div className="bg-gray-800 text-gray-300 text-xs font-semibold px-4 py-2 border-b border-gray-700 rounded-t-lg flex justify-between">
-          <span>System execution logs</span>
-          <button onClick={() => setLogs([])} className="hover:text-white">Clear</button>
+      {process.env.NODE_ENV === 'development' && (
+        <div className="w-full max-w-4xl mt-8 bg-gray-900 border border-gray-700 rounded-lg shadow-inner flex flex-col h-48">
+          <div className="bg-gray-800 text-gray-300 text-xs font-semibold px-4 py-2 border-b border-gray-700 rounded-t-lg flex justify-between">
+            <span>System execution logs (Dev Only)</span>
+            <button onClick={() => setLogs([])} className="hover:text-white">Clear</button>
+          </div>
+          <div className="p-4 overflow-y-auto flex-1 font-mono text-sm text-green-400 space-y-1">
+            {logs.map((log, i) => (
+              <div key={i}>{log}</div>
+            ))}
+            <div ref={logsEndRef} />
+          </div>
         </div>
-        <div className="p-4 overflow-y-auto flex-1 font-mono text-sm text-green-400 space-y-1">
-          {logs.map((log, i) => (
-            <div key={i}>{log}</div>
-          ))}
-          <div ref={logsEndRef} />
+      )}
+
+      {/* Author Footer */}
+      <footer className="w-full max-w-4xl mt-12 pt-8 border-t border-gray-200 flex flex-col items-center text-gray-500 mb-8">
+        <p className="mb-4 text-sm font-medium">✨ {lang === 'zh' ? '关注跨服寻宝小红书获取更多免费工具' : 'Follow author on Xiaohongshu for more tools'}</p>
+        <div className="bg-white p-2 rounded-xl shadow-sm border">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/qrcode.jpg" alt="小红书 跨服寻宝" className="w-48 h-auto rounded-lg" />
         </div>
-      </div>
+        <p className="mt-3 text-xs text-gray-400">小红书号：95009831256</p>
+      </footer>
     </main>
   );
 }
