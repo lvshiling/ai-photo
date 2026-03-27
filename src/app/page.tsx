@@ -4,8 +4,12 @@ import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision';
 
 import 'react-image-crop/dist/ReactCrop.css';
 import ReactCrop, { type Crop } from 'react-image-crop';
+import { dict } from '../i18n/dictionaries';
 
 export default function Home() {
+  const [lang, setLang] = useState<'zh' | 'en'>('zh');
+  const t = dict[lang];
+
   const [image, setImage] = useState<string | null>(null);
   const [segmenter, setSegmenter] = useState<ImageSegmenter | null>(null);
   const [bgColor, setBgColor] = useState<string>('#0000ff');
@@ -184,7 +188,7 @@ export default function Home() {
       }
     } catch (e) {
       console.error(e);
-      alert('Error processing image');
+      alert(t.error);
     }
   };
 
@@ -195,11 +199,22 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
-      <h1 className="text-3xl font-bold mb-8">AI ID Photo Maker</h1>
+      <div className="flex w-full max-w-4xl justify-between items-center mb-8">
+        <h1 className="text-3xl font-bold">{t.title}</h1>
+        <select 
+          value={lang} 
+          onChange={(e) => setLang(e.target.value as 'en' | 'zh')}
+          className="border p-2 rounded bg-white shadow-sm font-medium"
+          title="Select Language"
+        >
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
       
       <div className="flex flex-wrap items-center justify-center gap-4 mb-4 bg-white p-4 rounded-lg shadow-sm border w-full max-w-4xl">
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-700">Image:</label>
+          <label className="text-sm font-medium text-gray-700">{t.imgLabel}</label>
           <input 
             type="file" 
             accept="image/*" 
@@ -210,7 +225,7 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-700">Bg Color:</label>
+          <label className="text-sm font-medium text-gray-700">{t.bgLabel}</label>
           <input 
             type="color" 
             value={bgColor} 
@@ -221,7 +236,7 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-700">Size:</label>
+          <label className="text-sm font-medium text-gray-700">{t.sizeLabel}</label>
           <select 
             value={photoSize}
             onChange={(e) => {
@@ -231,9 +246,9 @@ export default function Home() {
             className="border p-1.5 rounded text-sm min-w-32"
             title="Select Photo Size"
           >
-            <option value="free">Free Crop</option>
-            <option value="1inch">1 Inch (295x413)</option>
-            <option value="2inch">2 Inch (413x579)</option>
+            <option value="free">{t.sizeFree}</option>
+            <option value="1inch">{t.size1Inch}</option>
+            <option value="2inch">{t.size2Inch}</option>
           </select>
         </div>
         
@@ -245,13 +260,13 @@ export default function Home() {
               onChange={(e) => setIsPrintLayout(e.target.checked)} 
               className="w-4 h-4"
             />
-            4x2 Layout
+            {t.layout}
           </label>
         )}
 
         <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
           <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
-            Beautify: {beautyLevel}
+            {t.beautify} {beautyLevel}
           </label>
           <input 
             type="range" 
@@ -269,14 +284,14 @@ export default function Home() {
           disabled={!segmenter || !image}
           className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded disabled:opacity-50 transition-colors font-semibold ml-auto"
         >
-          {segmenter ? 'Generate ID Photo' : 'Loading Model...'}
+          {segmenter ? t.btnGenerate : t.btnLoading}
         </button>
       </div>
 
       <div className="flex gap-8 items-start w-full max-w-5xl justify-center mt-4">
         {image && (
           <div className="flex flex-col items-center flex-1">
-            <h2 className="mb-2 font-semibold">Original Image (Select to crop)</h2>
+            <h2 className="mb-2 font-semibold">{t.originalImg}</h2>
             <ReactCrop crop={crop} onChange={(c) => setCrop(c)} aspect={cropAspect}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img 
@@ -291,7 +306,7 @@ export default function Home() {
         )}
         
         <div className="flex flex-col items-center flex-1">
-          <h2 className="mb-2 font-semibold">Result</h2>
+          <h2 className="mb-2 font-semibold">{t.resultImg}</h2>
           <canvas 
             ref={canvasRef} 
             className="border shadow-lg rounded bg-gray-100 max-w-full object-contain"
