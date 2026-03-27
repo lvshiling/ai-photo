@@ -4,6 +4,7 @@ import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision';
 
 import 'react-image-crop/dist/ReactCrop.css';
 import ReactCrop, { type Crop } from 'react-image-crop';
+import { useReactToPrint } from 'react-to-print';
 import { dict } from '../i18n/dictionaries';
 
 export default function Home() {
@@ -20,7 +21,13 @@ export default function Home() {
   const [logs, setLogs] = useState<string[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const resultContainerRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const handlePrint = useReactToPrint({
+    contentRef: resultContainerRef,
+    documentTitle: 'ID-Photo',
+  });
 
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString();
@@ -226,6 +233,18 @@ export default function Home() {
     }
   };
 
+  const handleSave = () => {
+    if (!canvasRef.current) return;
+    const dataUrl = canvasRef.current.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `id-photo-${new Date().getTime()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    addLog('Image saved to disk.');
+  };
+
   // Determine aspect ratio for cropping
   let cropAspect: number | undefined = undefined;
   if (photoSize === '1inch') cropAspect = 295 / 413;
@@ -340,11 +359,29 @@ export default function Home() {
         )}
         
         <div className="flex flex-col items-center flex-1">
-          <h2 className="mb-2 font-semibold">{t.resultImg}</h2>
-          <canvas 
-            ref={canvasRef} 
-            className="border shadow-lg rounded bg-gray-100 max-w-full object-contain"
-          />
+          <h2 className="mb-2 font-semibold flex items-center gap-4">
+            {t.resultImg}
+            <button
+              onClick={handlePrint}
+              disabled={!image}
+              className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1 text-sm rounded transition-colors"
+            >
+              {t.btnPrint}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!image}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-1 text-sm rounded transition-colors"
+            >
+              {t.btnSave}
+            </button>
+          </h2>
+          <div ref={resultContainerRef}>
+            <canvas 
+              ref={canvasRef} 
+              className="border shadow-lg rounded bg-white max-w-full object-contain"
+            />
+          </div>
         </div>
       </div>
 
