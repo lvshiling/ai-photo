@@ -146,10 +146,30 @@ export default function Home() {
       
       let bgConfidence: Float32Array | null = null;
       let hairConfidence: Float32Array | null = null;
+      let bodyConfidence: Float32Array | null = null;
+      
       if (result.confidenceMasks && result.confidenceMasks.length > 0) {
         if (result.confidenceMasks.length >= 6) {
            bgConfidence = result.confidenceMasks[0].getAsFloat32Array();
            hairConfidence = result.confidenceMasks[1].getAsFloat32Array();
+           // selfie_multiclass: 0=bg, 1=hair, 2=body/skin, 3=face, 4=clothes
+           
+           // Sum up clothes, face, and body to get the 'solid body' mask
+           bodyConfidence = new Float32Array(bgConfidence.length);
+           const m2 = result.confidenceMasks[2]?.getAsFloat32Array();
+           const m3 = result.confidenceMasks[3]?.getAsFloat32Array();
+           const m4 = result.confidenceMasks[4]?.getAsFloat32Array();
+           const m5 = result.confidenceMasks[5]?.getAsFloat32Array();
+           
+           for(let i=0; i<bodyConfidence.length; i++) {
+              let val = 0;
+              if (m2) val += m2[i];
+              if (m3) val += m3[i];
+              if (m4) val += m4[i];
+              if (m5) val += m5[i];
+              bodyConfidence[i] = val;
+           }
+           
            addLog('Using multiclass masks for background and hair.');
         } else if (result.confidenceMasks[1]) {
            // fallback to 2-class
@@ -231,6 +251,12 @@ export default function Home() {
                  if (hairConfidence[i] < 0.05) {
                     continue;
                  }
+                 
+                 // CRITICAL FIX: If this hair pixel lies OVER the body/clothes 
+                 // (body confidence is high), DO NOT treat it as a background blending edge!
+                 if (bodyConfidence && bodyConfidence[i] > 0.3) {
+                    continue;
+                 }
               }
 
               const pr = pixels[i * 4];
@@ -240,12 +266,13 @@ export default function Home() {
               // brightness estimation
               const lum = Math.max(pr, pg, pb);
               
-              // Only act on bright pixels (white background leftover)
-              if (lum > 140) {
+              // Act on mid-to-bright pixels (white background leftover)
+              if (lum > 90) {
                  // Push this pixel slightly more towards background transparency
                  // The brighter the pixel, and the higher the edgeTrim setting, the more it gets cut off.
-                 const brightRatio = (lum - 140) / (255 - 140); // 0.0 to 1.0
-                 let newBgAlpha = bgAlpha + trimFactor * brightRatio * 1.5; 
+                 const brightRatio = (lum - 90) / (255 - 90); // 0.0 to 1.0
+                 // MASSIVE increase to multiplier to give a highly aggressive cutoff!
+                 let newBgAlpha = bgAlpha + trimFactor * brightRatio * 8.0; 
                  alphaMask[i] = Math.min(1.0, newBgAlpha);
               }
            }
@@ -301,6 +328,31 @@ export default function Home() {
           let fr = beautyLevel > 0 ? beautyPixels[i * 4] : pixels[i * 4];
           let fg = beautyLevel > 0 ? beautyPixels[i * 4 + 1] : pixels[i * 4 + 1];
           let fb = beautyLevel > 0 ? beautyPixels[i * 4 + 2] : pixels[i * 4 + 2];
+          
+          // Second pass: Color decontamination specifically for the bright halos that survived cutoff
+          if (edgeTrim > 0 && bgAlpha > 0.01) {
+             let isHairEdge = false;
+             if (hairConfidence) {
+                if (hairConfidence[i] > 0.05 && (!bodyConfidence || bodyConfidence[i] < 0.3)) {
+                   isHairEdge = true;
+                }
+             } else {
+                isHairEdge = true; // fallback
+             }
+             
+             if (isHairEdge) {
+                 const lum = Math.max(fr, fg, fb);
+                 if (lum > 90) {
+                     const trimFactor = edgeTrim / 100;
+                     const bleed = (lum - 90) / (255 - 90);
+                     // Brutal decontamination for white bleed: pull the darks WAY down
+                     const darkenFactor = Math.max(0.05, 1.0 - (trimFactor * bleed * 1.5));
+                     fr *= darkenFactor;
+                     fg *= darkenFactor;
+                     fb *= darkenFactor;
+                 }
+             }
+          }
           
           pixels[i * 4] = Math.round(r * bgAlpha + fr * fgAlpha);
           pixels[i * 4 + 1] = Math.round(g * bgAlpha + fg * fgAlpha);
