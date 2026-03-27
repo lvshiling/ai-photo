@@ -1,0 +1,303 @@
+'use client';
+import { useRef, useState, useEffect } from 'react';
+import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision';
+
+import 'react-image-crop/dist/ReactCrop.css';
+import ReactCrop, { type Crop } from 'react-image-crop';
+
+export default function Home() {
+  const [image, setImage] = useState<string | null>(null);
+  const [segmenter, setSegmenter] = useState<ImageSegmenter | null>(null);
+  const [bgColor, setBgColor] = useState<string>('#0000ff');
+  const [photoSize, setPhotoSize] = useState<string>('free');
+  const [isPrintLayout, setIsPrintLayout] = useState<boolean>(false);
+  const [beautyLevel, setBeautyLevel] = useState<number>(0);
+  const [crop, setCrop] = useState<Crop>();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    async function initSegmenter() {
+      const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+      );
+      const segmenter = await ImageSegmenter.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+          delegate: 'GPU',
+        },
+        runningMode: 'IMAGE',
+        outputCategoryMask: true,
+        outputConfidenceMasks: false,
+      });
+      setSegmenter(segmenter);
+    }
+    initSegmenter();
+  }, []);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setImage(url);
+    }
+  };
+
+  const processImage = async () => {
+    if (!segmenter || !imageRef.current || !canvasRef.current) return;
+    const img = imageRef.current;
+    const canvas = canvasRef.current;
+
+    // Calculate crop dimensions relative to the natural image size
+    let sx = 0, sy = 0, sWidth = img.naturalWidth, sHeight = img.naturalHeight;
+    if (crop && crop.width > 0 && crop.height > 0) {
+      const scaleX = img.naturalWidth / img.width;
+      const scaleY = img.naturalHeight / img.height;
+      sx = crop.x * scaleX;
+      sy = crop.y * scaleY;
+      sWidth = crop.width * scaleX;
+      sHeight = crop.height * scaleY;
+    }
+
+    // Set target canvas size based on standard photo types
+    let targetWidth = sWidth;
+    let targetHeight = sHeight;
+    if (photoSize === '1inch') {
+      targetWidth = 295; // Standard 1-inch width at 300dpi
+      targetHeight = 413; // Standard 1-inch height at 300dpi
+    } else if (photoSize === '2inch') {
+      targetWidth = 413; // Standard 2-inch width at 300dpi
+      targetHeight = 579; // Standard 2-inch height at 300dpi
+    }
+
+    const isGrid = isPrintLayout && photoSize !== 'free';
+    const gridCols = 4;
+    const gridRows = 2;
+    const gridGap = 30;
+
+    // Set canvas to the actual required pixel size
+    if (isGrid) {
+      canvas.width = gridCols * targetWidth + (gridCols + 1) * gridGap;
+      canvas.height = gridRows * targetHeight + (gridRows + 1) * gridGap;
+    } else {
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Create a temporary canvas matching the natural image size for processing
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = img.naturalWidth;
+    tempCanvas.height = img.naturalHeight;
+    const tCtx = tempCanvas.getContext('2d');
+    if (!tCtx) return;
+
+    try {
+      const result = await segmenter.segment(img);
+      const categoryMask = result.categoryMask;
+      if (!categoryMask) return;
+
+      const maskData = categoryMask.getAsUint8Array();
+      
+      // Draw original image first to get pixel data
+      tCtx.drawImage(img, 0, 0);
+      const imgData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const pixels = imgData.data;
+
+      // Create a beautified version of the image if beauty level > 0
+      let beautyPixels = pixels;
+      if (beautyLevel > 0) {
+        const bCanvas = document.createElement('canvas');
+        bCanvas.width = img.naturalWidth;
+        bCanvas.height = img.naturalHeight;
+        const bCtx = bCanvas.getContext('2d');
+        if (bCtx) {
+          // Adjust brightness, contrast, and saturation
+          const brightness = 100 + (beautyLevel * 0.2); // Up to 120%
+          const contrast = 100 + (beautyLevel * 0.1);   // Up to 110%
+          const saturate = 100 + (beautyLevel * 0.2);   // Up to 120%
+          bCtx.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)`;
+          bCtx.drawImage(img, 0, 0);
+
+          // Apply a gentle "soft focus" for skin smoothing by overlaying a blurred copy
+          bCtx.globalAlpha = beautyLevel / 150; // max 0.66 at scale 100
+          bCtx.filter = `blur(${Math.max(1, beautyLevel / 15)}px)`;
+          bCtx.drawImage(img, 0, 0);
+          
+          beautyPixels = bCtx.getImageData(0, 0, bCanvas.width, bCanvas.height).data;
+        }
+      }
+
+      // Parse current background color
+      const hex = bgColor;
+      const r = parseInt(hex.substring(1, 3), 16);
+      const g = parseInt(hex.substring(3, 5), 16);
+      const b = parseInt(hex.substring(5, 7), 16);
+
+      // Apply mask: For selfie_segmenter, maskData might be 0 for person and non-zero for background, or vice versa.
+      // Since it previously colored the person, we reverse the condition.
+      for (let i = 0; i < maskData.length; i++) {
+        // If the original condition colored the person, we invert it to color the background
+        if (maskData[i] !== 0) { 
+          // Set background pixels to selected color
+          pixels[i * 4] = r;
+          pixels[i * 4 + 1] = g;
+          pixels[i * 4 + 2] = b;
+          pixels[i * 4 + 3] = 255; // fully opaque
+        } else if (beautyLevel > 0) {
+          // Keep foreground, but apply beautified pixels
+          pixels[i * 4] = beautyPixels[i * 4];
+          pixels[i * 4 + 1] = beautyPixels[i * 4 + 1];
+          pixels[i * 4 + 2] = beautyPixels[i * 4 + 2];
+        }
+      }
+
+      tCtx.putImageData(imgData, 0, 0);
+
+      if (isGrid) {
+        // Fill white background for print
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Generate a single photo first
+        const singleCanvas = document.createElement('canvas');
+        singleCanvas.width = targetWidth;
+        singleCanvas.height = targetHeight;
+        const singleCtx = singleCanvas.getContext('2d');
+        if (singleCtx) {
+          singleCtx.drawImage(tempCanvas, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
+          
+          // Layout in a grid
+          for (let r = 0; r < gridRows; r++) {
+            for (let c = 0; c < gridCols; c++) {
+              const dx = gridGap + c * (targetWidth + gridGap);
+              const dy = gridGap + r * (targetHeight + gridGap);
+              ctx.drawImage(singleCanvas, 0, 0, targetWidth, targetHeight, dx, dy, targetWidth, targetHeight);
+            }
+          }
+        }
+      } else {
+        // Just draw the single cropped portion
+        ctx.drawImage(tempCanvas, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error processing image');
+    }
+  };
+
+  // Determine aspect ratio for cropping
+  let cropAspect: number | undefined = undefined;
+  if (photoSize === '1inch') cropAspect = 295 / 413;
+  if (photoSize === '2inch') cropAspect = 413 / 579;
+
+  return (
+    <main className="flex min-h-screen flex-col items-center p-8">
+      <h1 className="text-3xl font-bold mb-8">AI ID Photo Maker</h1>
+      
+      <div className="flex flex-wrap items-center justify-center gap-4 mb-4 bg-white p-4 rounded-lg shadow-sm border w-full max-w-4xl">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-gray-700">Image:</label>
+          <input 
+            type="file" 
+            accept="image/*" 
+            onChange={handleImageUpload} 
+            className="border p-1.5 rounded text-sm w-48"
+            title="Upload Image"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-gray-700">Bg Color:</label>
+          <input 
+            type="color" 
+            value={bgColor} 
+            onChange={(e) => setBgColor(e.target.value)} 
+            className="h-8 w-8 p-0 border-0 rounded cursor-pointer"
+            title="Background Color"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-gray-700">Size:</label>
+          <select 
+            value={photoSize}
+            onChange={(e) => {
+              setPhotoSize(e.target.value);
+              setCrop(undefined);
+            }}
+            className="border p-1.5 rounded text-sm min-w-32"
+            title="Select Photo Size"
+          >
+            <option value="free">Free Crop</option>
+            <option value="1inch">1 Inch (295x413)</option>
+            <option value="2inch">2 Inch (413x579)</option>
+          </select>
+        </div>
+        
+        {photoSize !== 'free' && (
+          <label className="flex items-center gap-2 text-sm font-medium p-1.5 cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={isPrintLayout} 
+              onChange={(e) => setIsPrintLayout(e.target.checked)} 
+              className="w-4 h-4"
+            />
+            4x2 Layout
+          </label>
+        )}
+
+        <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+          <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+            Beautify: {beautyLevel}
+          </label>
+          <input 
+            type="range" 
+            min="0" 
+            max="100" 
+            value={beautyLevel} 
+            onChange={(e) => setBeautyLevel(parseInt(e.target.value))} 
+            className="w-32"
+            title="Beautify / Smooth Skin"
+          />
+        </div>
+
+        <button 
+          onClick={processImage} 
+          disabled={!segmenter || !image}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded disabled:opacity-50 transition-colors font-semibold ml-auto"
+        >
+          {segmenter ? 'Generate ID Photo' : 'Loading Model...'}
+        </button>
+      </div>
+
+      <div className="flex gap-8 items-start w-full max-w-5xl justify-center mt-4">
+        {image && (
+          <div className="flex flex-col items-center flex-1">
+            <h2 className="mb-2 font-semibold">Original Image (Select to crop)</h2>
+            <ReactCrop crop={crop} onChange={(c) => setCrop(c)} aspect={cropAspect}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img 
+                ref={imageRef} 
+                src={image} 
+                crossOrigin="anonymous" 
+                alt="Uploaded" 
+                className="max-w-[400px] border shadow-lg rounded"
+              />
+            </ReactCrop>
+          </div>
+        )}
+        
+        <div className="flex flex-col items-center flex-1">
+          <h2 className="mb-2 font-semibold">Result</h2>
+          <canvas 
+            ref={canvasRef} 
+            className="border shadow-lg rounded bg-gray-100 max-w-full object-contain"
+          />
+        </div>
+      </div>
+    </main>
+  );
+}
