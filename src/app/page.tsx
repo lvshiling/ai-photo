@@ -17,25 +17,46 @@ export default function Home() {
   const [isPrintLayout, setIsPrintLayout] = useState<boolean>(false);
   const [beautyLevel, setBeautyLevel] = useState<number>(0);
   const [crop, setCrop] = useState<Crop>();
+  const [logs, setLogs] = useState<string[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const addLog = (msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev, `[${time}] ${msg}`]);
+  };
+
+  useEffect(() => {
+    if (logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs]);
 
   useEffect(() => {
     async function initSegmenter() {
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-      );
-      const segmenter = await ImageSegmenter.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
-          delegate: 'GPU',
-        },
-        runningMode: 'IMAGE',
-        outputCategoryMask: true,
-        outputConfidenceMasks: false,
-      });
-      setSegmenter(segmenter);
+      addLog('System initializing...');
+      try {
+        addLog('Loading MediaPipe vision tasks WASM...');
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+        );
+        addLog('Fetching Selfie Segmenter model (this may take a moment)...');
+        const segmenter = await ImageSegmenter.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+            delegate: 'GPU',
+          },
+          runningMode: 'IMAGE',
+          outputCategoryMask: true,
+          outputConfidenceMasks: false,
+        });
+        setSegmenter(segmenter);
+        addLog('Model loaded successfully. Ready to process.');
+      } catch (err: any) {
+        addLog(`Error loading model: ${err.message}`);
+      }
     }
     initSegmenter();
   }, []);
@@ -49,10 +70,15 @@ export default function Home() {
   };
 
   const processImage = async () => {
-    if (!segmenter || !imageRef.current || !canvasRef.current) return;
+    if (!segmenter || !imageRef.current || !canvasRef.current) {
+      addLog('Cannot process: Model or image not ready.');
+      return;
+    }
     const img = imageRef.current;
     const canvas = canvasRef.current;
 
+    addLog('Starting image processing...');
+    
     // Calculate crop dimensions relative to the natural image size
     let sx = 0, sy = 0, sWidth = img.naturalWidth, sHeight = img.naturalHeight;
     if (crop && crop.width > 0 && crop.height > 0) {
@@ -99,9 +125,14 @@ export default function Home() {
     if (!tCtx) return;
 
     try {
+      addLog('Running segmenter model...');
       const result = await segmenter.segment(img);
       const categoryMask = result.categoryMask;
-      if (!categoryMask) return;
+      if (!categoryMask) {
+        addLog('Error: Model returned empty mask.');
+        return;
+      }
+      addLog('Segmenter finished. Applying background and formatting...');
 
       const maskData = categoryMask.getAsUint8Array();
       
@@ -186,8 +217,11 @@ export default function Home() {
         // Just draw the single cropped portion
         ctx.drawImage(tempCanvas, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
       }
-    } catch (e) {
+      
+      addLog('Output render complete.');
+    } catch (e: any) {
       console.error(e);
+      addLog(`Error processing image: ${e.message}`);
       alert(t.error);
     }
   };
@@ -311,6 +345,19 @@ export default function Home() {
             ref={canvasRef} 
             className="border shadow-lg rounded bg-gray-100 max-w-full object-contain"
           />
+        </div>
+      </div>
+
+      <div className="w-full max-w-4xl mt-8 bg-gray-900 border border-gray-700 rounded-lg shadow-inner flex flex-col h-48">
+        <div className="bg-gray-800 text-gray-300 text-xs font-semibold px-4 py-2 border-b border-gray-700 rounded-t-lg flex justify-between">
+          <span>System execution logs</span>
+          <button onClick={() => setLogs([])} className="hover:text-white">Clear</button>
+        </div>
+        <div className="p-4 overflow-y-auto flex-1 font-mono text-sm text-green-400 space-y-1">
+          {logs.map((log, i) => (
+            <div key={i}>{log}</div>
+          ))}
+          <div ref={logsEndRef} />
         </div>
       </div>
     </main>
