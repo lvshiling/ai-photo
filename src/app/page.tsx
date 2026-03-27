@@ -21,6 +21,8 @@ export default function Home() {
   const [crop, setCrop] = useState<Crop>();
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState<boolean>(false);
+  const [modelLoadingProgress, setModelLoadingProgress] = useState<number>(0);
+  const [isModelLoading, setIsModelLoading] = useState<boolean>(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const resultContainerRef = useRef<HTMLDivElement>(null);
@@ -59,15 +61,49 @@ export default function Home() {
     async function initSegmenter() {
       addLog('System initializing...');
       try {
+        setIsModelLoading(true);
         addLog('Loading MediaPipe vision tasks WASM...');
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
         );
         addLog('Fetching Selfie Segmenter model (this may take a moment)...');
+        
+        const response = await fetch('https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite');
+        const contentLength = response.headers.get('content-length');
+        const total = parseInt(contentLength || '0', 10);
+        let loaded = 0;
+
+        const reader = response.body?.getReader();
+        const chunks = [];
+
+        if (reader) {
+          let lastLoggedProgress = 0;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            loaded += value.length;
+            if (total) {
+              const currentProgress = Math.round((loaded / total) * 100);
+              setModelLoadingProgress(currentProgress);
+              if (currentProgress >= lastLoggedProgress + 10 || currentProgress === 100) {
+                addLog(`Downloading AI Model... ${currentProgress}%`);
+                lastLoggedProgress = currentProgress;
+              }
+            }
+          }
+        }
+        
+        let position = 0;
+        const modelBuffer = new Uint8Array(loaded);
+        for (const chunk of chunks) {
+          modelBuffer.set(chunk, position);
+          position += chunk.length;
+        }
+
         const segmenter = await ImageSegmenter.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite',
+            modelAssetBuffer: modelBuffer,
             delegate: 'GPU',
           },
           runningMode: 'IMAGE',
@@ -78,6 +114,8 @@ export default function Home() {
         addLog('Model loaded successfully. Ready to process.');
       } catch (err: unknown) {
         addLog(`Error loading model: ${(err as Error).message}`);
+      } finally {
+        setIsModelLoading(false);
       }
     }
     initSegmenter();
@@ -436,7 +474,7 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center p-8">
-      <div className="flex w-full max-w-4xl justify-between items-center mb-8">
+      <div className="flex w-full max-w-4xl justify-between items-center mb-4">
         <h1 className="text-3xl font-bold">{t.title}</h1>
         <select 
           value={lang} 
@@ -448,6 +486,15 @@ export default function Home() {
           <option value="en">English</option>
         </select>
       </div>
+
+      {isModelLoading && (
+        <div className="w-full max-w-4xl mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 flex flex-col items-center shadow-sm">
+          <span className="font-semibold mb-2">Downloading AI Model ({modelLoadingProgress}%)</span>
+          <div className="w-full bg-blue-200 rounded-full h-2.5">
+            <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${modelLoadingProgress}%` }}></div>
+          </div>
+        </div>
+      )}
       
       <div className="flex flex-wrap items-center justify-center gap-4 mb-4 bg-white p-4 rounded-lg shadow-sm border w-full max-w-4xl">
         <div className="flex items-center gap-2">
