@@ -14,9 +14,10 @@ export default function Home() {
   const [image, setImage] = useState<string | null>(null);
   const [segmenter, setSegmenter] = useState<ImageSegmenter | null>(null);
   const [bgColor, setBgColor] = useState<string>('#0000ff');
-  const [photoSize, setPhotoSize] = useState<string>('free');
+  const [photoSize, setPhotoSize] = useState<string>('1inch');
   const [isPrintLayout, setIsPrintLayout] = useState<boolean>(false);
   const [beautyLevel, setBeautyLevel] = useState<number>(0);
+  const [edgeTrim, setEdgeTrim] = useState<number>(0);
   const [crop, setCrop] = useState<Crop>();
   const [logs, setLogs] = useState<string[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -52,12 +53,12 @@ export default function Home() {
         const segmenter = await ImageSegmenter.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+              'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite',
             delegate: 'GPU',
           },
           runningMode: 'IMAGE',
           outputCategoryMask: true,
-          outputConfidenceMasks: false,
+          outputConfidenceMasks: true,
         });
         setSegmenter(segmenter);
         addLog('Model loaded successfully. Ready to process.');
@@ -108,7 +109,7 @@ export default function Home() {
       targetHeight = 579; // Standard 2-inch height at 300dpi
     }
 
-    const isGrid = isPrintLayout && photoSize !== 'free';
+    const isGrid = isPrintLayout;
     const gridCols = 4;
     const gridRows = 2;
     const gridGap = 30;
@@ -142,6 +143,24 @@ export default function Home() {
       addLog('Segmenter finished. Applying background and formatting...');
 
       const maskData = categoryMask.getAsUint8Array();
+      
+      let bgConfidence: Float32Array | null = null;
+      let hairConfidence: Float32Array | null = null;
+      if (result.confidenceMasks && result.confidenceMasks.length > 0) {
+        if (result.confidenceMasks.length >= 6) {
+           bgConfidence = result.confidenceMasks[0].getAsFloat32Array();
+           hairConfidence = result.confidenceMasks[1].getAsFloat32Array();
+           addLog('Using multiclass masks for background and hair.');
+        } else if (result.confidenceMasks[1]) {
+           // fallback to 2-class
+           const pConf = result.confidenceMasks[1].getAsFloat32Array();
+           bgConfidence = new Float32Array(pConf.length);
+           for(let i=0; i<pConf.length; i++) bgConfidence[i] = 1.0 - pConf[i];
+           addLog('Using 2-class masks.');
+        } else {
+           bgConfidence = result.confidenceMasks[0].getAsFloat32Array();
+        }
+      }
       
       // Draw original image first to get pixel data
       tCtx.drawImage(img, 0, 0);
@@ -178,18 +197,117 @@ export default function Home() {
       const g = parseInt(hex.substring(3, 5), 16);
       const b = parseInt(hex.substring(5, 7), 16);
 
-      // Apply mask: For selfie_segmenter, maskData might be 0 for person and non-zero for background, or vice versa.
-      // Since it previously colored the person, we reverse the condition.
-      for (let i = 0; i < maskData.length; i++) {
-        // If the original condition colored the person, we invert it to color the background
-        if (maskData[i] !== 0) { 
-          // Set background pixels to selected color
+      const w = tempCanvas.width;
+      const h = tempCanvas.height;
+      let alphaMask = new Float32Array(maskData.length);
+      
+      // Determine if maskData gives 0 for person or !== 0 for person
+      let isPersonZero = maskData[0] === 0 || maskData[10] === 0; 
+      
+      if (bgConfidence) {
+        // bgConfidence is straightforward map of background
+        for (let i = 0; i < alphaMask.length; i++) {
+          alphaMask[i] = bgConfidence[i];
+        }
+      } else {
+        for (let i = 0; i < maskData.length; i++) {
+          alphaMask[i] = (isPersonZero ? (maskData[i] === 0 ? 0.0 : 1.0) : (maskData[i] !== 0 ? 1.0 : 0.0));
+        }
+      }
+
+      if (edgeTrim > 0) {
+        addLog('Applying white edge cutoff for hair...');
+        const trimFactor = edgeTrim / 100; // 0.0 to 1.0
+        
+        for (let i = 0; i < alphaMask.length; i++) {
+           let bgAlpha = alphaMask[i];
+           // Only target the soft edge pixels (excluding the solid inner body where bgAlpha is ~0)
+           // and already purely background pixels.
+           if (bgAlpha > 0.02 && bgAlpha < 1.0) {
+              
+              if (hairConfidence) {
+                 // Only trim if this is considered partly hair
+                 // We don't want to trim skin or clothes
+                 if (hairConfidence[i] < 0.05) {
+                    continue;
+                 }
+              }
+
+              const pr = pixels[i * 4];
+              const pg = pixels[i * 4 + 1];
+              const pb = pixels[i * 4 + 2];
+              
+              // brightness estimation
+              const lum = Math.max(pr, pg, pb);
+              
+              // Only act on bright pixels (white background leftover)
+              if (lum > 140) {
+                 // Push this pixel slightly more towards background transparency
+                 // The brighter the pixel, and the higher the edgeTrim setting, the more it gets cut off.
+                 const brightRatio = (lum - 140) / (255 - 140); // 0.0 to 1.0
+                 let newBgAlpha = bgAlpha + trimFactor * brightRatio * 1.5; 
+                 alphaMask[i] = Math.min(1.0, newBgAlpha);
+              }
+           }
+        }
+        
+        // Minor smoothing of the pushed alpha to ensure we don't get aliased/jagged edges
+        const radius = 1;
+        const tempAlpha = new Float32Array(alphaMask.length);
+        
+        // Fast horizontal box blur
+        for (let y = 0; y < h; y++) {
+          let sum = 0;
+          for (let i = -radius; i <= radius; i++) {
+            sum += alphaMask[y * w + Math.min(Math.max(i, 0), w - 1)];
+          }
+          for (let x = 0; x < w; x++) {
+            tempAlpha[y * w + x] = sum / (radius * 2 + 1);
+            const next = x + radius + 1;
+            const prev = x - radius;
+            sum += alphaMask[y * w + Math.min(next, w - 1)];
+            sum -= alphaMask[y * w + Math.max(prev, 0)];
+          }
+        }
+        
+        // Fast vertical box blur
+        for (let x = 0; x < w; x++) {
+          let sum = 0;
+          for (let i = -radius; i <= radius; i++) {
+            sum += tempAlpha[Math.min(Math.max(i, 0), h - 1) * w + x];
+          }
+          for (let y = 0; y < h; y++) {
+            alphaMask[y * w + x] = sum / (radius * 2 + 1);
+            const next = y + radius + 1;
+            const prev = y - radius;
+            sum += tempAlpha[Math.min(next, h - 1) * w + x];
+            sum -= tempAlpha[Math.max(prev, 0) * w + x];
+          }
+        }
+      }
+
+      // Apply mask based on alpha interpolation
+      for (let i = 0; i < alphaMask.length; i++) {
+        const bgAlpha = alphaMask[i];
+        if (bgAlpha === 1.0) { 
+          // Pure Background
           pixels[i * 4] = r;
           pixels[i * 4 + 1] = g;
           pixels[i * 4 + 2] = b;
           pixels[i * 4 + 3] = 255; // fully opaque
+        } else if (bgAlpha > 0.0) {
+          // Mixed Edge Blending
+          const fgAlpha = 1.0 - bgAlpha;
+          let fr = beautyLevel > 0 ? beautyPixels[i * 4] : pixels[i * 4];
+          let fg = beautyLevel > 0 ? beautyPixels[i * 4 + 1] : pixels[i * 4 + 1];
+          let fb = beautyLevel > 0 ? beautyPixels[i * 4 + 2] : pixels[i * 4 + 2];
+          
+          pixels[i * 4] = Math.round(r * bgAlpha + fr * fgAlpha);
+          pixels[i * 4 + 1] = Math.round(g * bgAlpha + fg * fgAlpha);
+          pixels[i * 4 + 2] = Math.round(b * bgAlpha + fb * fgAlpha);
+          pixels[i * 4 + 3] = 255;
         } else if (beautyLevel > 0) {
-          // Keep foreground, but apply beautified pixels
+          // Pure Foreground
           pixels[i * 4] = beautyPixels[i * 4];
           pixels[i * 4 + 1] = beautyPixels[i * 4 + 1];
           pixels[i * 4 + 2] = beautyPixels[i * 4 + 2];
@@ -299,23 +417,20 @@ export default function Home() {
             className="border p-1.5 rounded text-sm min-w-32"
             title="Select Photo Size"
           >
-            <option value="free">{t.sizeFree}</option>
             <option value="1inch">{t.size1Inch}</option>
             <option value="2inch">{t.size2Inch}</option>
           </select>
         </div>
         
-        {photoSize !== 'free' && (
-          <label className="flex items-center gap-2 text-sm font-medium p-1.5 cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={isPrintLayout} 
-              onChange={(e) => setIsPrintLayout(e.target.checked)} 
-              className="w-4 h-4"
-            />
-            {t.layout}
-          </label>
-        )}
+        <label className="flex items-center gap-2 text-sm font-medium p-1.5 cursor-pointer">
+          <input 
+            type="checkbox" 
+            checked={isPrintLayout} 
+            onChange={(e) => setIsPrintLayout(e.target.checked)} 
+            className="w-4 h-4"
+          />
+          {t.layout}
+        </label>
 
         <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
           <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
@@ -329,6 +444,21 @@ export default function Home() {
             onChange={(e) => setBeautyLevel(parseInt(e.target.value))} 
             className="w-32"
             title="Beautify / Smooth Skin"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+          <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+            {t.edgeTrim} {edgeTrim}
+          </label>
+          <input 
+            type="range" 
+            min="0" 
+            max="100" 
+            value={edgeTrim} 
+            onChange={(e) => setEdgeTrim(parseInt(e.target.value))} 
+            className="w-32"
+            title="Edge Trim / Blending"
           />
         </div>
 
