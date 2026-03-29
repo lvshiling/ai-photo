@@ -137,53 +137,85 @@ export default function PassportScanner() {
     if (!img.naturalWidth) return;
 
     try {
-        // Read at full natural resolution regardless of CSS scale
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.naturalWidth;
-        tempCanvas.height = img.naturalHeight;
-        const tempCtx = tempCanvas.getContext('2d')!;
-        tempCtx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
-        
-        const src = window.cv.imread(tempCanvas);
-        const [tl, tr, br, bl] = anchorPoints;
-        
-        const width = Math.max(
-            Math.hypot(tr.x - tl.x, tr.y - tl.y),
-            Math.hypot(br.x - bl.x, br.y - bl.y)
-        );
-        const height = Math.max(
-            Math.hypot(tl.x - bl.x, tl.y - bl.y),
-            Math.hypot(tr.x - br.x, tr.y - br.y)
-        );
-        
-        if (width === 0 || height === 0) {
-           src.delete();
-           return;
-        }
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = img.naturalWidth;
+          tempCanvas.height = img.naturalHeight;
+          const tempCtx = tempCanvas.getContext('2d')!;
+          tempCtx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+          const src = window.cv.imread(tempCanvas);
 
-        const result = new window.cv.Mat();
-        const srcTri = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [
-            tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
-        ]);
-        const dstTri = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [
-            0, 0, width-1, 0, width-1, height-1, 0, height-1
-        ]);
-        
-        const M = window.cv.getPerspectiveTransform(srcTri, dstTri);
-        window.cv.warpPerspective(src, result, M, new window.cv.Size(width, height));
+          if (anchorPoints.length === 6) {
+              const [tl, tr, rm, br, bl, lm] = anchorPoints;
+              const topWidth = Math.max(Math.hypot(tr.x - tl.x, tr.y - tl.y), Math.hypot(rm.x - lm.x, rm.y - lm.y));
+              const topHeight = Math.max(Math.hypot(tl.x - lm.x, tl.y - lm.y), Math.hypot(tr.x - rm.x, tr.y - rm.y));
+              const botWidth = Math.max(Math.hypot(rm.x - lm.x, rm.y - lm.y), Math.hypot(br.x - bl.x, br.y - bl.y));
+              const botHeight = Math.max(Math.hypot(lm.x - bl.x, lm.y - bl.y), Math.hypot(rm.x - br.x, rm.y - br.y));
 
-        // Apply BW transformations if scanMode === 'bw'
-        if (scanMode === 'bw') {
-            window.cv.cvtColor(result, result, window.cv.COLOR_RGBA2GRAY, 0);
-            window.cv.adaptiveThreshold(result, result, 255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY, 21, 15);
-        }
-        
-        window.cv.imshow(canvasRef.current, result);
-        
-        src.delete(); result.delete(); srcTri.delete(); dstTri.delete(); M.delete();
-    } catch (err) {
-        console.error("Preview Update Error:", err);
-    }
+              const finalWidth = Math.round(Math.max(topWidth, botWidth));
+              const th = Math.round(topHeight);
+              const bh = Math.round(botHeight);
+              const finalHeight = th + bh;
+
+              if (finalWidth <= 0 || finalHeight <= 0) {
+                 src.delete();
+                 return;
+              }
+
+              const result = new window.cv.Mat.zeros(finalHeight, finalWidth, src.type());
+
+              const srcTriTop = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, rm.x, rm.y, lm.x, lm.y]);
+              const dstTriTop = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [0, 0, finalWidth-1, 0, finalWidth-1, th-1, 0, th-1]);
+              const mTop = window.cv.getPerspectiveTransform(srcTriTop, dstTriTop);
+              const topWarped = new window.cv.Mat();
+              window.cv.warpPerspective(src, topWarped, mTop, new window.cv.Size(finalWidth, th));
+
+              const srcTriBot = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [lm.x, lm.y, rm.x, rm.y, br.x, br.y, bl.x, bl.y]);
+              const dstTriBot = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [0, 0, finalWidth-1, 0, finalWidth-1, bh-1, 0, bh-1]);
+              const mBot = window.cv.getPerspectiveTransform(srcTriBot, dstTriBot);
+              const botWarped = new window.cv.Mat();
+              window.cv.warpPerspective(src, botWarped, mBot, new window.cv.Size(finalWidth, bh));
+
+              const roiTopMat = result.roi(new window.cv.Rect(0, 0, finalWidth, th));
+              topWarped.copyTo(roiTopMat);
+              roiTopMat.delete(); topWarped.delete(); mTop.delete(); srcTriTop.delete(); dstTriTop.delete();
+
+              const roiBotMat = result.roi(new window.cv.Rect(0, th, finalWidth, bh));
+              botWarped.copyTo(roiBotMat);
+              roiBotMat.delete(); botWarped.delete(); mBot.delete(); srcTriBot.delete(); dstTriBot.delete();
+
+              if (scanMode === 'bw') {
+                  window.cv.cvtColor(result, result, window.cv.COLOR_RGBA2GRAY, 0);
+                  window.cv.adaptiveThreshold(result, result, 255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY, 21, 15);
+              }
+              
+              window.cv.imshow(canvasRef.current, result);
+              src.delete(); result.delete();
+          } else {
+              const [tl, tr, br, bl] = anchorPoints;
+              const width = Math.max(Math.hypot(tr.x - tl.x, tr.y - tl.y), Math.hypot(br.x - bl.x, br.y - bl.y));
+              const height = Math.max(Math.hypot(tl.x - bl.x, tl.y - bl.y), Math.hypot(tr.x - br.x, tr.y - br.y));
+              const finalWidth = Math.round(width);
+              const finalHeight = Math.round(height);
+              if (finalWidth <= 0 || finalHeight <= 0) {
+                 src.delete();
+                 return;
+              }
+              const result = new window.cv.Mat();
+              const srcTri = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
+              const dstTri = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [0, 0, finalWidth-1, 0, finalWidth-1, finalHeight-1, 0, finalHeight-1]);
+              const M = window.cv.getPerspectiveTransform(srcTri, dstTri);
+              window.cv.warpPerspective(src, result, M, new window.cv.Size(finalWidth, finalHeight));
+
+              if (scanMode === 'bw') {
+                  window.cv.cvtColor(result, result, window.cv.COLOR_RGBA2GRAY, 0);
+                  window.cv.adaptiveThreshold(result, result, 255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY, 21, 15);
+              }
+              window.cv.imshow(canvasRef.current, result);
+              src.delete(); result.delete(); srcTri.delete(); dstTri.delete(); M.delete();
+          }
+      } catch (err) {
+          console.error("Preview Update Error:", err);
+      }
   }, [anchorPoints, scanMode]);
 
   useEffect(() => {
@@ -396,7 +428,9 @@ export default function PassportScanner() {
                 addLog(`TL: (${tl.x}, ${tl.y}) TR: (${tr.x}, ${tr.y})`);
                 addLog(`BL: (${bl.x}, ${bl.y}) BR: (${br.x}, ${br.y})`);
                 
-                setAnchorPoints([{...tl}, {...tr}, {...br}, {...bl}]);
+                const rm = { x: Math.round((tr.x + br.x) / 2), y: Math.round((tr.y + br.y) / 2) };
+                const lm = { x: Math.round((tl.x + bl.x) / 2), y: Math.round((tl.y + bl.y) / 2) };
+                setAnchorPoints([{...tl}, {...tr}, {...rm}, {...br}, {...bl}, {...lm}]);
                 setImageDims({ w: img.naturalWidth, h: img.naturalHeight });
                 setHasAutoCropped(true);
             } else {
@@ -412,16 +446,20 @@ export default function PassportScanner() {
                     setAnchorPoints([
                         { x: fx, y: fy },
                         { x: fx + fw, y: fy },
+                        { x: fx + fw, y: fy + fh / 2 },
                         { x: fx + fw, y: fy + fh },
-                        { x: fx, y: fy + fh }
+                        { x: fx, y: fy + fh },
+                        { x: fx, y: fy + fh / 2 }
                     ]);
                 } else {
                     addLog(`Manual fallback required.`);
                     setAnchorPoints([
                         { x: img.naturalWidth * 0.1, y: img.naturalHeight * 0.1 },
                         { x: img.naturalWidth * 0.9, y: img.naturalHeight * 0.1 },
+                        { x: img.naturalWidth * 0.9, y: img.naturalHeight * 0.5 },
                         { x: img.naturalWidth * 0.9, y: img.naturalHeight * 0.9 },
-                        { x: img.naturalWidth * 0.1, y: img.naturalHeight * 0.9 }
+                        { x: img.naturalWidth * 0.1, y: img.naturalHeight * 0.9 },
+                        { x: img.naturalWidth * 0.1, y: img.naturalHeight * 0.5 }
                     ]);
                 }
                 setImageDims({ w: img.naturalWidth, h: img.naturalHeight });
@@ -578,6 +616,15 @@ export default function PassportScanner() {
                           stroke="#10b981"
                           strokeWidth={Math.max(2, imageDims.w * 0.005)}
                       />
+                      {anchorPoints.length === 6 && (
+                          <line
+                              x1={anchorPoints[5].x} y1={anchorPoints[5].y}
+                              x2={anchorPoints[2].x} y2={anchorPoints[2].y}
+                              stroke="#10b981"
+                              strokeWidth={Math.max(2, imageDims.w * 0.005)}
+                              strokeDasharray={`${Math.max(5, imageDims.w * 0.01)}, ${Math.max(5, imageDims.w * 0.01)}`}
+                          />
+                      )}
                       {anchorPoints.map((p, i) => (
                           <circle 
                               key={i}
