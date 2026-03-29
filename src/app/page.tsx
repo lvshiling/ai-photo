@@ -38,6 +38,18 @@ export default function Main() {
           <p className="text-sm text-gray-500">{t.idPhotoDesc}</p>
         </Link>
         
+        {/* Passport Tool Card */}
+        <Link 
+          href="/passport" 
+          className="group flex flex-col items-center bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md hover:border-emerald-300 hover:-translate-y-1 transition-all cursor-pointer text-center"
+        >
+          <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
+            🛂
+          </div>
+          <h2 className="text-xl font-semibold mb-2 text-gray-800">{t.passportTitle}</h2>
+          <p className="text-sm text-gray-500">{t.passportDesc}</p>
+        </Link>
+
         {/* Coming Soon Placeholder */}
         <div className="flex flex-col items-center bg-gray-100/50 p-8 rounded-2xl border border-gray-200 border-dashed text-center opacity-80">
           <div className="w-16 h-16 bg-gray-200 text-gray-500 rounded-2xl flex items-center justify-center text-3xl mb-4">
