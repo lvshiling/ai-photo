@@ -456,19 +456,37 @@ export default function PassportScanner() {
     if (docs.length === 0) return;
 
     let pdf: jsPDF | null = null;
+    
+    // Standard ISO 7810 ID-3 dimension (Passport size) is 125mm x 88mm.
+    const passportWidthMm = 125;
+    const passportHeightMm = 88;
+
     for (let i = 0; i < docs.length; i++) {
         const doc = docs[i];
         if (!doc.previewUrl || !doc.previewDims) continue;
         
         const { w: width, h: height } = doc.previewDims;
-        const orientation = width > height ? 'l' : 'p';
+        
+        // Define standard passport dimensions based on extraction aspect ratio
+        let targetWidth = passportWidthMm;
+        let targetHeight = passportHeightMm;
+        let orientation: 'l' | 'p' = 'l';
+
+        if (height > width) {
+            targetWidth = passportHeightMm;
+            targetHeight = passportWidthMm;
+            orientation = 'p';
+        }
 
         if (!pdf) {
-            pdf = new jsPDF({ orientation, unit: 'px', format: [width, height] });
+            // Create PDF with mm units mapped to exactly the real passport dimensions
+            pdf = new jsPDF({ orientation, unit: 'mm', format: [targetWidth, targetHeight] });
         } else {
-            pdf.addPage([width, height], orientation);
+            pdf.addPage([targetWidth, targetHeight], orientation);
         }
-        pdf.addImage(doc.previewUrl, 'JPEG', 0, 0, width, height);
+        
+        // Ensure image fits perfectly filling physical space
+        pdf.addImage(doc.previewUrl, 'JPEG', 0, 0, targetWidth, targetHeight);
     }
     
     if (pdf) {
