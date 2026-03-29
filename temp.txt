@@ -1,7 +1,9 @@
 'use client';
 import Link from 'next/link';
 import Script from 'next/script';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import ReactCrop, { type Crop } from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
 import { jsPDF } from 'jspdf';
 import { dict } from '../../i18n/dictionaries';
 
@@ -20,11 +22,7 @@ export default function PassportScanner() {
 
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [originalImageSrc, setOriginalImageSrc] = useState<string | null>(null);
-  const [anchorPoints, setAnchorPoints] = useState<{x: number, y: number}[] | null>(null);
-  const [draggingPoint, setDraggingPoint] = useState<number | null>(null);
-  const [imageDims, setImageDims] = useState<{w: number, h: number} | null>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  
+  const [crop, setCrop] = useState<Crop>();
   const [scanMode, setScanMode] = useState<'color' | 'bw'>('color');
   const [useOnnx, setUseOnnx] = useState(false);
   const [onnxReady, setOnnxReady] = useState(false);
@@ -130,97 +128,84 @@ export default function PassportScanner() {
     xhr.send();
   }, []);
 
-  // Replace old effect with perspective update loop
-  const updatePreviewCanvas = useCallback(() => {
-    if (!window.cv || !anchorPoints || !imageRef.current || !canvasRef.current) return;
-    const img = imageRef.current;
-    if (!img.naturalWidth) return;
-
-    try {
-        // Read at full natural resolution regardless of CSS scale
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.naturalWidth;
-        tempCanvas.height = img.naturalHeight;
-        const tempCtx = tempCanvas.getContext('2d')!;
-        tempCtx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
-        
-        const src = window.cv.imread(tempCanvas);
-        const [tl, tr, br, bl] = anchorPoints;
-        
-        const width = Math.max(
-            Math.hypot(tr.x - tl.x, tr.y - tl.y),
-            Math.hypot(br.x - bl.x, br.y - bl.y)
-        );
-        const height = Math.max(
-            Math.hypot(tl.x - bl.x, tl.y - bl.y),
-            Math.hypot(tr.x - br.x, tr.y - br.y)
-        );
-        
-        if (width === 0 || height === 0) {
-           src.delete();
-           return;
-        }
-
-        const result = new window.cv.Mat();
-        const srcTri = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [
-            tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
-        ]);
-        const dstTri = window.cv.matFromArray(4, 1, window.cv.CV_32FC2, [
-            0, 0, width-1, 0, width-1, height-1, 0, height-1
-        ]);
-        
-        const M = window.cv.getPerspectiveTransform(srcTri, dstTri);
-        window.cv.warpPerspective(src, result, M, new window.cv.Size(width, height));
-
-        // Apply BW transformations if scanMode === 'bw'
-        if (scanMode === 'bw') {
-            window.cv.cvtColor(result, result, window.cv.COLOR_RGBA2GRAY, 0);
-            window.cv.adaptiveThreshold(result, result, 255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY, 21, 15);
-        }
-        
-        window.cv.imshow(canvasRef.current, result);
-        
-        src.delete(); result.delete(); srcTri.delete(); dstTri.delete(); M.delete();
-    } catch (err) {
-        console.error("Preview Update Error:", err);
-    }
-  }, [anchorPoints, scanMode]);
-
+  // Update preview automatically whenever crop or mode changes
   useEffect(() => {
-    if (anchorPoints && draggingPoint === null) {
-        updatePreviewCanvas();
+    if (!canvasRef.current || !imageSrc) {
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      return;
     }
-  }, [anchorPoints, draggingPoint, updatePreviewCanvas]);
 
-  const handlePointerDown = (idx: number, e: React.PointerEvent<SVGCircleElement>) => {
-    setDraggingPoint(idx);
-    e.currentTarget.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  };
+    if (!hasAutoCropped && (!imageRef.current || !crop || crop.width === 0 || crop.height === 0)) {
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      return;
+    }
 
-  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (draggingPoint === null || !svgRef.current || !anchorPoints || !imageDims) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const rawX = e.clientX - rect.left;
-    const rawY = e.clientY - rect.top;
-    
-    // Convert to bounded natural coords
-    const x = Math.max(0, Math.min((rawX / rect.width) * imageDims.w, imageDims.w));
-    const y = Math.max(0, Math.min((rawY / rect.height) * imageDims.h, imageDims.h));
-    
-    const newPoints = [...anchorPoints];
-    newPoints[draggingPoint] = {x, y};
-    setAnchorPoints(newPoints);
-  };
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-  const handlePointerUp = (e: React.PointerEvent<SVGSVGElement> | React.PointerEvent<SVGCircleElement>) => {
-    if (draggingPoint !== null) {
-        if ('releasePointerCapture' in e.currentTarget && e.pointerId) {
-            e.currentTarget.releasePointerCapture(e.pointerId);
+    const processCanvas = (imgData: HTMLImageElement, sX: number, sY: number, sWidth: number, sHeight: number) => {
+      canvas.width = sWidth;
+      canvas.height = sHeight;
+
+      // Base filter for scan enhancements
+      if (scanMode === 'bw') {
+        ctx.filter = 'grayscale(100%) contrast(120%) brightness(110%)';
+      } else {
+        ctx.filter = 'none';
+      }
+
+      // Fill background with white in case of transparency
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, sWidth, sHeight);
+      
+      try {
+        ctx.drawImage(imgData, sX, sY, sWidth, sHeight, 0, 0, sWidth, sHeight);
+        
+        // OpenCV Wrinkle Removal & Illumination fix for B&W
+        // This wipes out shadows and creases to create a perfectly flat document look
+        if (scanMode === 'bw' && window.cv && window.cv.Mat) {
+           ctx.filter = 'none'; // reset so next frames aren't double-filtered
+           
+           const src = window.cv.imread(canvas);
+           const gray = new window.cv.Mat();
+           window.cv.cvtColor(src, gray, window.cv.COLOR_RGBA2GRAY, 0);
+           const mask = new window.cv.Mat();
+           
+           // Adaptive threshold completely flattens shadows/wrinkles into a clean B&W scan
+           window.cv.adaptiveThreshold(gray, mask, 255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY, 21, 15);
+           
+           window.cv.imshow(canvas, mask);
+           src.delete(); gray.delete(); mask.delete();
         }
-        setDraggingPoint(null);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    if (hasAutoCropped) {
+      const img = new Image();
+      img.onload = () => {
+        processCanvas(img, 0, 0, img.naturalWidth, img.naturalHeight);
+      };
+      img.src = imageSrc;
+    } else {
+      const img = imageRef.current!;
+      const scaleX = img.naturalWidth / img.width;
+      const scaleY = img.naturalHeight / img.height;
+      const sX = crop!.x * scaleX;
+      const sY = crop!.y * scaleY;
+      const sWidth = crop!.width * scaleX;
+      const sHeight = crop!.height * scaleY;
+      processCanvas(img, sX, sY, sWidth, sHeight);
     }
-  };
+  }, [crop, scanMode, imageSrc, hasAutoCropped]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -232,6 +217,7 @@ export default function PassportScanner() {
     
     if (!window.cv || !window.cv.Mat) {
        setImageSrc(url);
+       setCrop(undefined);
        setHasAutoCropped(false);
        setIsProcessing(false);
        return;
@@ -396,10 +382,36 @@ export default function PassportScanner() {
                 addLog(`TL: (${tl.x}, ${tl.y}) TR: (${tr.x}, ${tr.y})`);
                 addLog(`BL: (${bl.x}, ${bl.y}) BR: (${br.x}, ${br.y})`);
                 
-                setAnchorPoints([{...tl}, {...tr}, {...br}, {...bl}]);
-                setImageDims({ w: img.naturalWidth, h: img.naturalHeight });
+                const width = Math.max(
+                    Math.hypot(tr.x - tl.x, tr.y - tl.y),
+                    Math.hypot(br.x - bl.x, br.y - bl.y)
+                );
+                const height = Math.max(
+                    Math.hypot(tl.x - bl.x, tl.y - bl.y),
+                    Math.hypot(tr.x - br.x, tr.y - br.y)
+                );
+                
+                // Use jscanify to extract the paper using the original image and mapped corners
+                // @ts-ignore
+                const jscanifyModule = await import('jscanify/client');
+                const JScanify = jscanifyModule.default || jscanifyModule;
+                const scanner = new JScanify();
+                
+                const outCanvas = scanner.extractPaper(img, width, height, {
+                    topLeftCorner: tl,
+                    topRightCorner: tr,
+                    bottomRightCorner: br,
+                    bottomLeftCorner: bl
+                });
+                
+                setImageSrc(outCanvas.toDataURL('image/jpeg', 0.95));
                 setHasAutoCropped(true);
+                
+                setTimeout(() => {
+                    setCrop({ unit: '%', x: 0, y: 0, width: 100, height: 100 });
+                }, 100);
             } else {
+                setImageSrc(url);
                 setHasAutoCropped(false);
                 
                 if (fallbackBoundingRect) {
@@ -409,30 +421,26 @@ export default function PassportScanner() {
                     const fh = Math.round(fallbackBoundingRect.height / scale);
                     addLog(`Using bounding rect fallback: x=${fx}, y=${fy}, w=${fw}, h=${fh}`);
                     
-                    setAnchorPoints([
-                        { x: fx, y: fy },
-                        { x: fx + fw, y: fy },
-                        { x: fx + fw, y: fy + fh },
-                        { x: fx, y: fy + fh }
-                    ]);
+                    setTimeout(() => {
+                        setCrop({
+                            unit: '%',
+                            x: (fx / src.cols) * 100,
+                            y: (fy / src.rows) * 100,
+                            width: (fw / src.cols) * 100,
+                            height: (fh / src.rows) * 100
+                        });
+                    }, 100);
                 } else {
-                    addLog(`Manual fallback required.`);
-                    setAnchorPoints([
-                        { x: img.naturalWidth * 0.1, y: img.naturalHeight * 0.1 },
-                        { x: img.naturalWidth * 0.9, y: img.naturalHeight * 0.1 },
-                        { x: img.naturalWidth * 0.9, y: img.naturalHeight * 0.9 },
-                        { x: img.naturalWidth * 0.1, y: img.naturalHeight * 0.9 }
-                    ]);
+                    addLog(`Manual crop required.`);
+                    setCrop(undefined);
                 }
-                setImageDims({ w: img.naturalWidth, h: img.naturalHeight });
             }
-            // Trigger processing end, preview will be generated via useEffect
-            setImageSrc(url);
             
             src.delete(); procSrc.delete();
         } catch (err) {
             console.error("CV Processing Error: ", err);
             setImageSrc(url);
+            setCrop(undefined);
             setHasAutoCropped(false);
         } finally {
             setIsProcessing(false);
@@ -442,7 +450,9 @@ export default function PassportScanner() {
   };
 
   const generatePDF = () => {
-    if (!canvasRef.current || !anchorPoints) return;
+    if (!canvasRef.current) return;
+    if (!hasAutoCropped && (!crop || crop.width === 0)) return;
+    
     const canvas = canvasRef.current;
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
     
@@ -539,9 +549,9 @@ export default function PassportScanner() {
           </select>
         </div>
 
-        <button
-          onClick={generatePDF}
-          disabled={!imageSrc || !anchorPoints}
+        <button 
+          onClick={generatePDF} 
+          disabled={!imageSrc || (!hasAutoCropped && (!crop || crop.width === 0))}
           className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded disabled:opacity-50 transition-colors font-semibold ml-auto flex items-center gap-2 shadow-sm"
         >
           📄 {t.pspGeneratePdf}
@@ -550,65 +560,62 @@ export default function PassportScanner() {
 
       {imageSrc ? (
         <div className="flex flex-col md:flex-row gap-8 items-start w-full max-w-5xl justify-center mt-4">
-          <div className="flex flex-col items-center flex-1 w-full md:w-1/2">   
-            <h2 className="mb-3 font-semibold text-gray-700">{lang === 'zh' ? '原始图片' : 'Original Photo'}</h2>
-            <div className="relative inline-block border border-gray-200 shadow-sm rounded-lg" style={{ touchAction: 'none' }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}        
-              <img
-                ref={imageRef}
-                src={originalImageSrc || imageSrc}
-                alt="Original Passport"
-                style={{ maxHeight: '500px', maxWidth: '100%', width: 'auto', height: 'auto', display: 'block' }}
-                onLoad={updatePreviewCanvas}
-                className="opacity-90"
-              />
-              {anchorPoints && imageDims && (
-                  <svg 
-                      ref={svgRef}
-                      className="absolute top-0 left-0 w-full h-full z-10"
-                      viewBox={`0 0 ${imageDims.w} ${imageDims.h}`}
-                      preserveAspectRatio="none"
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={handlePointerUp}
-                      onPointerLeave={handlePointerUp}
-                  >
-                      <polygon 
-                          points={anchorPoints.map(p => `${p.x},${p.y}`).join(' ')}
-                          fill="rgba(16, 185, 129, 0.2)"
-                          stroke="#10b981"
-                          strokeWidth={Math.max(2, imageDims.w * 0.005)}
-                      />
-                      {anchorPoints.map((p, i) => (
-                          <circle 
-                              key={i}
-                              cx={p.x}
-                              cy={p.y}
-                              r={Math.max(10, imageDims.w * 0.03)}
-                              fill="white"
-                              stroke="#10b981"
-                              strokeWidth={Math.max(2, imageDims.w * 0.005)}
-                              onPointerDown={(e) => handlePointerDown(i, e)}
-                              style={{ cursor: draggingPoint === i ? 'grabbing' : 'grab' }}
-                          />
-                      ))}
-                  </svg>
-              )}
+          {!hasAutoCropped ? (
+          <div className="flex flex-col items-center flex-1 w-full md:w-1/2">
+            <h2 className="mb-3 font-semibold text-gray-700">{t.pspCrop}</h2>
+            <div className="p-2 bg-white rounded-lg shadow-sm border w-full flex justify-center">
+              <ReactCrop crop={crop} onChange={(c) => setCrop(c)}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img 
+                  ref={imageRef} 
+                  src={imageSrc} 
+                  alt="Passport Uploaded" 
+                  className="max-h-[500px] w-auto rounded object-contain border border-gray-200"
+                />
+              </ReactCrop>
             </div>
             <p className="mt-4 text-xs text-emerald-700 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-100 shadow-sm text-center">
-              {lang === 'zh' ? '💡 提示：您可以自由拖拽 4 个控制点以对齐照片' : '💡 Tip: You can drag the 4 corner anchors to align.'}
+              {lang === 'zh' ? '💡 提示：您可以拖拽框选清理边缘瑕疵' : '💡 Tip: You can crop to clean edges.'}
             </p>
           </div>
-
-          <div className="flex flex-col items-center flex-1 w-full md:w-1/2">   
+          ) : (
+          <div className="flex flex-col items-center flex-1 w-full md:w-1/2">
+            <h2 className="mb-3 font-semibold text-gray-700">{lang === 'zh' ? '原始图片' : 'Original Photo'}</h2>
+            <div className="p-2 bg-white rounded-lg shadow-sm border w-full flex justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img 
+                src={originalImageSrc || imageSrc} 
+                alt="Original Passport" 
+                className="max-h-[500px] w-auto rounded object-contain border border-gray-200 opacity-80"
+              />
+            </div>
+            <p className="mt-4 text-xs text-emerald-700 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-100 shadow-sm text-center">
+              {lang === 'zh' ? '✅ AI 已成功提取文档' : '✅ AI successfully extracted document.'}
+            </p>
+            {/* Hidden ref for auto crop */}
+            <div className="hidden">
+              <ReactCrop crop={crop} onChange={(c) => setCrop(c)}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img 
+                  ref={imageRef} 
+                  src={imageSrc} 
+                  alt="Hidden AutoCrop Reference" 
+                />
+              </ReactCrop>
+            </div>
+          </div>
+          )}
+          
+          <div className="flex flex-col items-center flex-1 w-full md:w-1/2">
             <h2 className="mb-3 font-semibold text-gray-700">{t.pspPreview}</h2>
             <div className="p-4 bg-gray-100 border-2 border-dashed border-gray-300 rounded-lg w-full min-h-[400px] flex items-center justify-center relative overflow-hidden shadow-inner">
-              <canvas
-                ref={canvasRef}
-                className={`max-w-[100%] max-h-[500px] shadow-lg bg-white object-contain border border-gray-300 ${anchorPoints ? 'block' : 'hidden'}`}
+              <canvas 
+                ref={canvasRef} 
+                className={`max-w-[100%] max-h-[500px] shadow-lg bg-white object-contain border border-gray-300 ${(hasAutoCropped || (crop && crop.width > 0)) ? 'block' : 'hidden'}`}
               />
-              {!anchorPoints && (
+              {(!hasAutoCropped && (!crop || crop.width === 0)) && (
                 <span className="text-gray-400 absolute font-medium">
-                  {lang === 'zh' ? '请在左侧确认锚点位置以预览' : 'Adjust points on the left to preview'}
+                  {lang === 'zh' ? '请在左侧框选文档区域以预览' : 'Make a selection on the left to preview'}
                 </span>
               )}
             </div>
@@ -616,8 +623,8 @@ export default function PassportScanner() {
         </div>
       ) : (
         <div className="w-full max-w-4xl bg-white p-12 rounded-2xl shadow-sm border mt-4 flex flex-col items-center justify-center text-gray-400 border-dashed border-2">
-          <div className="text-6xl mb-6 opacity-30 text-emerald-600">📸</div>   
-          <p className="font-medium text-lg text-gray-500">{lang === 'zh' ? '请先上传您的照片以进行扫描矫正' : 'Upload photo to auto-deskew and scan'}</p>
+          <div className="text-6xl mb-6 opacity-30 text-emerald-600">📸</div>
+          <p className="font-medium text-lg text-gray-500">{lang === 'zh' ? '请先上传您的护照照片，自动矫正生成扫描件' : 'Upload passport photo to auto-deskew and scan'}</p>
         </div>
       )}
 

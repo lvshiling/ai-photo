@@ -30,7 +30,9 @@
   },
   "dependencies": {
     "@techstark/opencv-js": "^4.12.0-release.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "jimp": "^1.6.0",
+    "jscanify": "^1.4.2"
   },
   "devDependencies": {
     "@capacitor/android": "^8.3.0",
