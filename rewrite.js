@@ -1,5 +1,6 @@
+const fs = require('fs');
+const newContent = `
 'use client';
-/* eslint-disable */
 import Link from 'next/link';
 import Script from 'next/script';
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -49,7 +50,7 @@ export default function PassportScanner() {
 
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString();
-    setLogs(prev => [...prev, `[${time}] ${msg}`]);
+    setLogs(prev => [...prev, \`[\${time}] \${msg}\`]);
   };
 
   useEffect(() => {
@@ -87,14 +88,15 @@ export default function PassportScanner() {
         const percentComplete = Math.round((event.loaded / event.total) * 100);
         setCvProgress(percentComplete);
         if (percentComplete >= lastLoggedProgress + 10 || percentComplete === 100) {
-          addLog(`Downloading OpenCV.js... ${percentComplete}%`);
+          addLog(\`Downloading OpenCV.js... \${percentComplete}%\`);
           lastLoggedProgress = percentComplete;
         }
       } else {
+        // Fallback for no length
         setCvProgress((prev) => {
           const next = prev < 90 ? prev + 5 : 90;
           if (next >= lastLoggedProgress + 10) {
-            addLog(`Downloading OpenCV.js (Simulated)... ${next}%`);
+            addLog(\`Downloading OpenCV.js (Simulated)... \${next}%\`);
             lastLoggedProgress = next;
           }
           return next;
@@ -115,7 +117,7 @@ export default function PassportScanner() {
           }
         }, 100);
       } else {
-        addLog(`Error loading OpenCV: HTTP ${xhr.status}`);
+        addLog(\`Error loading OpenCV: HTTP \${xhr.status}\`);
       }
     };
     xhr.onerror = () => addLog('Failed to fetch OpenCV.js Check network connection.');
@@ -282,7 +284,7 @@ export default function PassportScanner() {
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const url = URL.createObjectURL(file);
-        const id = Date.now().toString() + "_" + i + "_" + Math.random().toString();
+        const id = Date.now().toString() + i + Math.random().toString();
 
         if (!window.cv || !window.cv.Mat) {
             newDocs.push({ id, originalUrl: url, anchorPoints: null, dims: null, hasAutoCropped: false, previewUrl: null, previewDims: null });
@@ -306,11 +308,10 @@ export default function PassportScanner() {
                         window.cv.resize(src, procSrc, new window.cv.Size(src.cols * scale, src.rows * scale), 0, 0, window.cv.INTER_AREA);
                     }
 
-                    // @ts-ignore
                     const jscanifyModule = await import('jscanify/client');
                     const JScanify = jscanifyModule.default || jscanifyModule;
                     const scanner = new JScanify();
-                    addLog(`Processing ${file.name}...`);
+                    addLog(\`Processing \${file.name}...\`);
                     
                     const paperContour = scanner.findPaperContour(procSrc);
                     if (paperContour && window.cv.contourArea(paperContour) > 10000) {
@@ -424,14 +425,12 @@ export default function PassportScanner() {
         });
     }
 
-    setDocs(prev => {
-        const updated = [...prev, ...newDocs];
-        if (activeIdx < 0 && updated.length > 0) {
-            setActiveIdx(0);
-        }
-        return updated;
-    });
-    
+    setDocs(prev => [...prev, ...newDocs]);
+    if (startIndex === 0 && newDocs.length > 0) {
+        setActiveIdx(0);
+    } else if (activeIdx < 0 && newDocs.length > 0) {
+        setActiveIdx(0);
+    }
     setIsProcessing(false);
     e.target.value = ''; 
   };
@@ -472,7 +471,7 @@ export default function PassportScanner() {
     }
     
     if (pdf) {
-        pdf.save(`passport-scan-multi-${new Date().getTime()}.pdf`);
+        pdf.save(\`passport-scan-multi-\${new Date().getTime()}.pdf\`);
     } else {
         addLog("No processed images found to generate PDF.");
     }
@@ -498,10 +497,10 @@ export default function PassportScanner() {
       {!cvReady && (
         <div className="w-full max-w-5xl mb-4 p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 flex flex-col items-center shadow-sm">    
           <span className="font-semibold mb-2">
-            {lang === 'zh' ? `正在下载 OpenCV 智能引擎组件 (${cvProgress}%)` : `Downloading OpenCV AI Engine (${cvProgress}%)`}
+            {lang === 'zh' ? \`正在下载 OpenCV 智能引擎组件 (\${cvProgress}%)\` : \`Downloading OpenCV AI Engine (\${cvProgress}%)\`}
           </span>
           <div className="w-full bg-emerald-200 rounded-full h-2.5">
-            <div className="bg-emerald-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${cvProgress}%` }}></div>
+            <div className="bg-emerald-600 h-2.5 rounded-full transition-all duration-300" style={{ width: \`\${cvProgress}%\` }}></div>
           </div>
         </div>
       )}
@@ -675,3 +674,5 @@ export default function PassportScanner() {
     </main>
   );
 }
+`
+fs.writeFileSync('src/app/passport/page.tsx', newContent);
