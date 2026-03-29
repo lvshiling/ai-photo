@@ -25,6 +25,14 @@ export const dict = {
     moreToolsTitle: "More Tools",
     moreToolsDesc: "Coming soon...",
     footerText: "Follow author on Xiaohongshu for more tools",
+    // Passport Scanner
+    pspUpload: "Upload Passport",
+    pspCrop: "Crop Document Area",
+    pspEnhance: "Scan Style",
+    pspModeColor: "Color (Original)",
+    pspModeScan: "B&W Scan (Enhanced)",
+    pspGeneratePdf: "Save as PDF",
+    pspPreview: "Preview",
   },
   zh: {
     title: "AI 智能证件照制作",
@@ -52,5 +60,13 @@ export const dict = {
     moreToolsTitle: "更多工具",
     moreToolsDesc: "敬请期待...",
     footerText: "关注跨服寻宝小红书获取更多免费工具",
+    // Passport Scanner
+    pspUpload: "上传护照照片",
+    pspCrop: "框选护照区域",
+    pspEnhance: "扫描件效果",
+    pspModeColor: "彩色原图",
+    pspModeScan: "黑白扫描件增强",
+    pspGeneratePdf: "保存为 PDF",
+    pspPreview: "效果预览",
   }
 };
