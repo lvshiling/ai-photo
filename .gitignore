@@ -38,3 +38,4 @@ pnpm-debug.log*
 next-env.d.ts
 
 /dist-exe
+/android
