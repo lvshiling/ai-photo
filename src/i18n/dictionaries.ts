@@ -16,6 +16,13 @@ export const dict = {
     originalImg: "Original Image (Select to crop)",
     resultImg: "Result",
     error: "Error processing image",
+    // Main page
+    mainTitle: "AI Tools Collection",
+    idPhotoTitle: "AI ID Photo Maker",
+    idPhotoDesc: "Smart background removal & standard ID photo generation",
+    moreToolsTitle: "More Tools",
+    moreToolsDesc: "Coming soon...",
+    footerText: "Follow author on Xiaohongshu for more tools",
   },
   zh: {
     title: "AI 智能证件照制作",
@@ -34,5 +41,12 @@ export const dict = {
     originalImg: "原图 (鼠标拖拽框选裁切)",
     resultImg: "最终结果",
     error: "处理图片时发生错误",
+    // Main page
+    mainTitle: "AI 工具箱",
+    idPhotoTitle: "AI 智能证件照制作",
+    idPhotoDesc: "智能抠图换底与标准证件照生成",
+    moreToolsTitle: "更多工具",
+    moreToolsDesc: "敬请期待...",
+    footerText: "关注跨服寻宝小红书获取更多免费工具",
   }
 };
