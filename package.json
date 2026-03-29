@@ -15,6 +15,7 @@
   "build": {
     "appId": "com.babetree.aiphoto",
     "productName": "AI ID Photo Maker",
+    "compression": "maximum",
     "directories": {
       "output": "dist-exe"
     },
@@ -22,23 +23,19 @@
       "out/**/*",
       "electron/main.js"
     ],
+    "asar": true,
     "win": {
       "target": "nsis"
     }
   },
   "dependencies": {
-    "@capacitor/android": "^8.3.0",
-    "@capacitor/core": "^8.3.0",
-    "@mediapipe/tasks-vision": "^0.10.14",
-    "express": "^5.2.1",
-    "next": "14.2.14",
-    "react": "^18",
-    "react-dom": "^18",
-    "react-image-crop": "^11.0.10",
-    "react-to-print": "^3.3.0"
+    "express": "^5.2.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.3.0",
     "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
+    "@mediapipe/tasks-vision": "^0.10.14",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
@@ -47,7 +44,12 @@
     "electron-builder": "^26.8.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.14",
+    "next": "14.2.14",
     "postcss": "^8",
+    "react": "^18",
+    "react-dom": "^18",
+    "react-image-crop": "^11.0.10",
+    "react-to-print": "^3.3.0",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
   }
